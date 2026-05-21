@@ -24,6 +24,12 @@ var monitorsTemplate string
 //go:embed templates/tui.go.tmpl
 var tuiTemplate string
 
+//go:embed templates/monitors.lua.go.tmpl
+var monitorsLuaTemplate string
+
+//go:embed templates/tui.lua.go.tmpl
+var tuiLuaTemplate string
+
 type Service struct {
 	cfg *config.Config
 	ipc *hypr.IPC
@@ -83,14 +89,22 @@ func (s *Service) EditExisting(profileName string, currentMonitors []*hypr.Monit
 		return errors.New("profile not found")
 	}
 
-	tmpl, err := template.New("part").Parse(tuiTemplate)
+	isLua := strings.HasSuffix(profile.ConfigFile, ".lua")
+	tmplStr := tuiTemplate
+	monitorLines := s.ToHyprLines(currentMonitors)
+	if isLua {
+		tmplStr = tuiLuaTemplate
+		monitorLines = s.ToLuaLines(currentMonitors)
+	}
+
+	tmpl, err := template.New("part").Parse(tmplStr)
 	if err != nil {
 		return fmt.Errorf("failed to parse template: %w", err)
 	}
 
 	templateData := map[string]any{
 		"Monitors":     currentMonitors,
-		"MonitorLines": s.ToHyprLines(currentMonitors),
+		"MonitorLines": monitorLines,
 	}
 
 	var rendered bytes.Buffer
@@ -109,10 +123,12 @@ func (s *Service) EditExisting(profileName string, currentMonitors []*hypr.Monit
 // updateConfigFileWithContent reads the config file, finds TUI AUTO markers and replaces content between them,
 // or appends the content to the end if markers are not found
 func (s *Service) updateConfigFileWithContent(configFile, newContent string) error {
-	const (
-		startMarker = "# <<<<< TUI AUTO START"
-		endMarker   = "# <<<<< TUI AUTO END"
-	)
+	startMarker := "# <<<<< TUI AUTO START"
+	endMarker := "# <<<<< TUI AUTO END"
+	if strings.HasSuffix(configFile, ".lua") {
+		startMarker = "-- <<<<< TUI AUTO START"
+		endMarker = "-- <<<<< TUI AUTO END"
+	}
 
 	// nolint:gosec
 	existingContent, err := os.ReadFile(configFile)
@@ -205,14 +221,21 @@ func (s *Service) append(profileSpec *bytes.Buffer, cfg *config.RawConfig) error
 }
 
 func (s *Service) render(currentMonitors hypr.MonitorSpecs, profile *config.Profile) (func() error, error) {
-	tmpl, err := template.New("config").Parse(monitorsTemplate)
+	tmplStr := monitorsTemplate
+	monitorLines := s.ToHyprLines(currentMonitors)
+	if strings.HasSuffix(profile.ConfigFile, ".lua") {
+		tmplStr = monitorsLuaTemplate
+		monitorLines = s.ToLuaLines(currentMonitors)
+	}
+
+	tmpl, err := template.New("config").Parse(tmplStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse template: %w", err)
 	}
 
 	templateData := map[string]any{
 		"Monitors":     currentMonitors,
-		"MonitorLines": s.ToHyprLines(currentMonitors),
+		"MonitorLines": monitorLines,
 	}
 
 	var rendered bytes.Buffer
@@ -350,4 +373,70 @@ func (s *Service) ToHyprLines(monitors hypr.MonitorSpecs) []string {
 	logrus.Debugf("Monitors freeze: %v", lines)
 
 	return lines
+}
+
+func (s *Service) ToLuaLines(monitors hypr.MonitorSpecs) []string {
+	lines := []string{}
+
+	for _, monitor := range monitors {
+		identifier := monitor.Name
+		if monitor.Description != "" {
+			identifier = "desc:" + utils.EscapeHyprDescription(monitor.Description)
+		}
+		quoted := luaQuoteMonitor(identifier)
+
+		if monitor.Disabled {
+			lines = append(lines, fmt.Sprintf(`hl.monitor({ output = %s, mode = "disable" })`, quoted))
+			continue
+		}
+
+		scale := monitor.Scale
+		var scaleStr string
+		if scale == float64(int(scale)) {
+			scaleStr = fmt.Sprintf("%d", int(scale))
+		} else {
+			scaleStr = fmt.Sprintf("%g", scale)
+		}
+
+		parts := []string{
+			fmt.Sprintf("output = %s", quoted),
+			fmt.Sprintf(`mode = "%dx%d@%.5f"`, monitor.Width, monitor.Height, monitor.RefreshRate),
+			fmt.Sprintf(`position = "%dx%d"`, monitor.X, monitor.Y),
+			fmt.Sprintf("scale = %s", scaleStr),
+			fmt.Sprintf("transform = %d", monitor.Transform),
+		}
+		if monitor.Vrr {
+			parts = append(parts, "vrr = 1")
+		} else {
+			parts = append(parts, "vrr = 0")
+		}
+		if monitor.TenBitdepth {
+			parts = append(parts, "bitdepth = 10")
+		}
+		if monitor.HasNonDefaultColorPreset() {
+			parts = append(parts, fmt.Sprintf(`cm = "%s"`, monitor.ColorPreset))
+		}
+		if monitor.HDR() && monitor.SdrBrightness != 1.0 {
+			parts = append(parts, fmt.Sprintf("sdrbrightness = %.2f", monitor.SdrBrightness))
+		}
+		if monitor.HDR() && monitor.SdrSaturation != 1.0 {
+			parts = append(parts, fmt.Sprintf("sdrsaturation = %.2f", monitor.SdrSaturation))
+		}
+		if monitor.HasMirror() {
+			parts = append(parts, fmt.Sprintf(`mirror = "%s"`, monitor.Mirror))
+		}
+
+		lines = append(lines, "hl.monitor({ "+strings.Join(parts, ", ")+" })")
+	}
+
+	logrus.Debugf("Monitors freeze (lua): %v", lines)
+
+	return lines
+}
+
+func luaQuoteMonitor(s string) string {
+	if strings.ContainsAny(s, "\"\\") {
+		return "[[" + s + "]]"
+	}
+	return `"` + s + `"`
 }

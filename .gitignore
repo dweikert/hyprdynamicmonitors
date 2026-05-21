@@ -19,3 +19,14 @@ coverage.html
 coverage.xml
 
 hypr-vm.*
+
+# Local/personal config files
+/*.lua
+/config.toml
+
+# Editor and OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store

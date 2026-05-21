@@ -18,7 +18,18 @@ type Service struct {
 }
 
 func NewService(cfg *config.Config) *Service {
-	monitorDisableRegex := regexp.MustCompile(`.*monitor.*=.*disable.*`)
+	dest := ""
+	if raw := cfg.Get(); raw != nil && raw.General != nil && raw.General.Destination != nil {
+		dest = *raw.General.Destination
+	}
+
+	var monitorDisableRegex *regexp.Regexp
+	if strings.HasSuffix(dest, ".lua") {
+		monitorDisableRegex = regexp.MustCompile(`.*hl\.monitor\(.*mode\s*=\s*"disable".*\).*`)
+	} else {
+		monitorDisableRegex = regexp.MustCompile(`.*monitor.*=.*disable.*`)
+	}
+
 	return &Service{
 		cfg,
 		monitorDisableRegex,
