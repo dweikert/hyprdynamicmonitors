@@ -3,6 +3,7 @@ venv
 CLAUDE.md
 hyprdynamicmonitors
 main
+hyprconfigs/
 # Added by goreleaser init:
 dist/
 node_modules/
