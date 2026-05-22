@@ -89,7 +89,7 @@ func (s *Service) EditExisting(profileName string, currentMonitors []*hypr.Monit
 		return errors.New("profile not found")
 	}
 
-	isLua := strings.HasSuffix(profile.ConfigFile, ".lua")
+	isLua := s.luaDestination()
 	tmplStr := tuiTemplate
 	monitorLines := s.ToHyprLines(currentMonitors)
 	if isLua {
@@ -123,12 +123,9 @@ func (s *Service) EditExisting(profileName string, currentMonitors []*hypr.Monit
 // updateConfigFileWithContent reads the config file, finds TUI AUTO markers and replaces content between them,
 // or appends the content to the end if markers are not found
 func (s *Service) updateConfigFileWithContent(configFile, newContent string) error {
-	startMarker := "# <<<<< TUI AUTO START"
-	endMarker := "# <<<<< TUI AUTO END"
-	if strings.HasSuffix(configFile, ".lua") {
-		startMarker = "-- <<<<< TUI AUTO START"
-		endMarker = "-- <<<<< TUI AUTO END"
-	}
+	// newContent already carries the correct markers for the destination format
+	// (the embedded template picked in EditExisting), so we only need to locate
+	// and replace any existing block here.
 
 	// nolint:gosec
 	existingContent, err := os.ReadFile(configFile)
@@ -141,18 +138,36 @@ func (s *Service) updateConfigFileWithContent(configFile, newContent string) err
 		return fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	content := string(existingContent)
-	finalContent := s.newMethod(content, startMarker, endMarker, newContent)
+	finalContent := s.replaceAutoBlock(string(existingContent), newContent)
 	if err := utils.WriteAtomic(configFile, []byte(finalContent)); err != nil {
 		return fmt.Errorf("cant write new config: %w", err)
 	}
 	return nil
 }
 
-func (*Service) newMethod(content, startMarker, endMarker, newContent string) string {
-	startIdx := strings.Index(content, startMarker)
-	endIdx := strings.Index(content, endMarker)
-	if startIdx != -1 && endIdx != -1 && endIdx > startIdx {
+// autoMarkerPairs are the start/end markers that delimit the TUI-managed monitor
+// block, in both supported comment syntaxes (hyprland conf "#" and lua "--").
+// When editing we must find an existing block regardless of which syntax it was
+// written in — e.g. a profile first created against a .conf destination and then
+// switched to a .lua one — otherwise the stale block is left behind and the new
+// block appended, duplicating monitors in the rendered output.
+var autoMarkerPairs = [2][2]string{
+	{"# <<<<< TUI AUTO START", "# <<<<< TUI AUTO END"},
+	{"-- <<<<< TUI AUTO START", "-- <<<<< TUI AUTO END"},
+}
+
+// replaceAutoBlock replaces the existing TUI-managed block (in whichever marker
+// syntax it currently uses) with newContent, or appends newContent when no block
+// is present.
+func (*Service) replaceAutoBlock(content, newContent string) string {
+	for _, pair := range autoMarkerPairs {
+		startMarker, endMarker := pair[0], pair[1]
+		startIdx := strings.Index(content, startMarker)
+		endIdx := strings.Index(content, endMarker)
+		if startIdx == -1 || endIdx == -1 || endIdx <= startIdx {
+			continue
+		}
+
 		beforeMarker := content[:startIdx]
 		afterMarker := content[endIdx+len(endMarker):]
 
@@ -162,11 +177,8 @@ func (*Service) newMethod(content, startMarker, endMarker, newContent string) st
 
 		// Handle afterMarker content - prevent newline accumulation
 		switch {
-		case afterMarker == "":
-			// No content after markers - template already ends with newline, don't add more
-			afterMarker = ""
 		case strings.TrimSpace(afterMarker) == "":
-			// Only whitespace/newlines after markers (likely end of file) - don't accumulate
+			// No real content after markers (likely end of file) - don't accumulate
 			afterMarker = ""
 		default:
 			// There is real content after the markers - preserve reasonable spacing
@@ -223,7 +235,7 @@ func (s *Service) append(profileSpec *bytes.Buffer, cfg *config.RawConfig) error
 func (s *Service) render(currentMonitors hypr.MonitorSpecs, profile *config.Profile) (func() error, error) {
 	tmplStr := monitorsTemplate
 	monitorLines := s.ToHyprLines(currentMonitors)
-	if strings.HasSuffix(profile.ConfigFile, ".lua") {
+	if s.luaDestination() {
 		tmplStr = monitorsLuaTemplate
 		monitorLines = s.ToLuaLines(currentMonitors)
 	}
@@ -432,6 +444,16 @@ func (s *Service) ToLuaLines(monitors hypr.MonitorSpecs) []string {
 	logrus.Debugf("Monitors freeze (lua): %v", lines)
 
 	return lines
+}
+
+// luaDestination reports whether the configured destination is a lua file, in
+// which case the generated monitor block must use lua syntax. The destination
+// is the single source of truth for the output format (same check as the
+// prepare service uses).
+func (s *Service) luaDestination() bool {
+	raw := s.cfg.Get()
+	return raw != nil && raw.General != nil && raw.General.Destination != nil &&
+		strings.HasSuffix(*raw.General.Destination, ".lua")
 }
 
 func luaQuoteMonitor(s string) string {

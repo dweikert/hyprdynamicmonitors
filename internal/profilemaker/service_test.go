@@ -206,3 +206,59 @@ func TestService_EditExisting(t *testing.T) {
 		})
 	}
 }
+
+// TestService_EditExisting_CrossFormat guards against duplicating the monitor
+// block when the destination format differs from the markers already present in
+// the template (e.g. a profile created against a .conf destination and then
+// switched to a .lua one). The existing conf-marker block must be replaced, not
+// left behind with a second lua block appended.
+func TestService_EditExisting_CrossFormat(t *testing.T) {
+	monitors := []*hypr.MonitorSpec{
+		{
+			ID: utils.IntPtr(1), Name: "monA", Description: "New Monitor A",
+			Width: 2560, Height: 1440, RefreshRate: 120.0, Scale: 1.5,
+		},
+	}
+	require.NoError(t, monitors[0].Validate(), "monitor spec should be correct")
+
+	tempDir := t.TempDir()
+	configFile := filepath.Join(tempDir, "profile.tmpl")
+
+	profile := &config.Profile{
+		Name:       "test-profile",
+		ConfigFile: configFile,
+		ConfigType: utils.JustPtr(config.Template),
+		Conditions: &config.ProfileCondition{
+			RequiredMonitors: []*config.RequiredMonitor{{Name: utils.StringPtr("eDP-1")}},
+		},
+	}
+
+	cfg := testutils.NewTestConfig(t).
+		WithDestination(filepath.Join(tempDir, "monitors.lua")).
+		WithProfiles(map[string]*config.Profile{"test-profile": profile}).
+		Get()
+
+	// Seed the template with a conf-style (#) block, as it would have been
+	// written before the destination was switched to lua.
+	seed := "# preamble\n" +
+		"# <<<<< TUI AUTO START\n" +
+		"monitor=desc:Old Monitor,1920x1080@60.00000,0x0,1.00000000,transform,0,vrr,0\n" +
+		"# <<<<< TUI AUTO END\n"
+	require.NoError(t, os.WriteFile(configFile, []byte(seed), 0o600))
+
+	service := profilemaker.NewService(cfg, nil)
+	require.NoError(t, service.EditExisting("test-profile", monitors))
+
+	out, err := os.ReadFile(configFile)
+	require.NoError(t, err)
+	result := string(out)
+
+	// The lua block replaced the conf block: lua markers + lua syntax present,
+	// the stale conf monitor line gone, and exactly one block remains.
+	assert.Contains(t, result, "-- <<<<< TUI AUTO START")
+	assert.Contains(t, result, "hl.monitor(")
+	assert.Contains(t, result, "# preamble", "non-managed content should be preserved")
+	assert.NotContains(t, result, "monitor=desc:Old Monitor", "stale conf block must be replaced")
+	assert.NotContains(t, result, "# <<<<< TUI AUTO START", "conf markers must not remain")
+	assert.Equal(t, 1, strings.Count(result, "<<<<< TUI AUTO START"), "must not duplicate the block")
+}
