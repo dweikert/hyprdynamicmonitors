@@ -152,6 +152,9 @@ func getFuncMap(powerState power.PowerState, lidState power.LidState) template.F
 		"isLidOpened": func() bool {
 			return lidState == power.OpenedLidState
 		},
+		// roleByPosition assigns left/center/right from physical monitor layout
+		// so profiles don't need to hand-tag monitors. See types.go.
+		"roleByPosition": roleByPosition,
 	}
 	return funcMap
 }
