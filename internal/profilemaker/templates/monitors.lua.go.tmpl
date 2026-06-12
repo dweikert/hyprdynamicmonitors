@@ -4,6 +4,14 @@
 -- Monitors are given arbitrary tags (the "monitor" prefix and the ID coming from hyprland).
 -- If you are using tui to edit, leave this at the end of your file (the last monitor config applies)
 -- and leave the markers.
+-- Monitor roles for workspace pinning (layout.lua). Re-resolved on every
+-- render: leftmost monitor = left, rightmost = right, main/middle = center.
+hl_roles = {
+{{`{{- range $tag, $mon := roleByPosition .Monitors }}
+  {{ $tag }} = [[{{ if $mon.Description }}desc:{{ $mon.Description }}{{ else }}{{ $mon.Name }}{{ end }}]],
+{{- end }}`}}
+}
+
 -- <<<<< TUI AUTO START
 {{- range .MonitorLines }}
 {{ . }}
