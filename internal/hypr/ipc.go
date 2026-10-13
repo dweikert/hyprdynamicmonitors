@@ -159,5 +159,12 @@ func (h *IPC) queryConnectedMonitors(ctx context.Context) (MonitorSpecs, error) 
 	}
 	defer teardown()
 
-	return dial.SyncQuerySocket[MonitorSpecs](conn, "j/monitors all\n")
+	monitors, err := dial.SyncQuerySocket[MonitorSpecs](conn, "j/monitors all\n")
+	if err != nil {
+		return nil, err
+	}
+	for _, monitor := range monitors {
+		monitor.EDIDHash = ReadEDIDHash(monitor.Name)
+	}
+	return monitors, nil
 }

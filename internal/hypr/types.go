@@ -33,6 +33,9 @@ type MonitorSpec struct {
 	SdrBrightness   float64  `json:"sdrBrightness"`
 	SdrSaturation   float64  `json:"sdrSaturation"`
 	ColorPreset     string   `json:"colorManagementPreset"`
+	// EDIDHash is the hex sha256 of the monitor EDID read from sysfs, empty if unavailable.
+	// It tells apart identical panels (same description/serial) independent of the connector.
+	EDIDHash string `json:"-"`
 }
 
 func (m *MonitorSpec) IsTenBitdepth() bool {

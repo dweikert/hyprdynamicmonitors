@@ -159,7 +159,7 @@ func TestLoad(t *testing.T) {
 			name:          "invalid - monitor without name or description",
 			configFile:    "invalid_monitor_no_name_desc.toml",
 			expectError:   true,
-			errorContains: "at least one of name, or description must be specified",
+			errorContains: "at least one of name, description, or edid_hash must be specified",
 		},
 		{
 			name:          "invalid - scoring value zero",

@@ -1282,6 +1282,7 @@ func createTestConfig(t *testing.T, profiles map[string]*config.Profile) *testut
 	return testutils.NewTestConfig(t).WithProfiles(profiles).WithScoring(&config.ScoringSection{
 		NameMatch:        utils.IntPtr(10),
 		DescriptionMatch: utils.IntPtr(5),
+		EdidMatch:        utils.IntPtr(7),
 		PowerStateMatch:  utils.IntPtr(3),
 		LidStateMatch:    utils.IntPtr(3),
 	})
@@ -1296,6 +1297,7 @@ func normalizeRequiredMonitor(rm *config.RequiredMonitor) *config.RequiredMonito
 		Name:                       rm.Name,
 		Description:                rm.Description,
 		MonitorTag:                 rm.MonitorTag,
+		EdidHash:                   rm.EdidHash,
 		MatchDescriptionUsingRegex: rm.MatchDescriptionUsingRegex,
 		MatchNameUsingRegex:        rm.MatchNameUsingRegex,
 		// Intentionally omit DescriptionRegex and NameRegex
@@ -1312,4 +1314,44 @@ func normalizeMonitorToRule(m map[int]*config.RequiredMonitor) map[int]*config.R
 		normalized[k] = normalizeRequiredMonitor(v)
 	}
 	return normalized
+}
+
+func TestMatcher_EdidHashDistinguishesIdenticalMonitors(t *testing.T) {
+	const desc = "Lenovo Group Limited LEN P27q-10 0x01010101"
+	cfg := createTestConfig(t, map[string]*config.Profile{
+		"dual": {
+			Name: "dual",
+			Conditions: &config.ProfileCondition{
+				RequiredMonitors: []*config.RequiredMonitor{
+					{Description: utils.StringPtr(desc), EdidHash: utils.StringPtr("aaaaaaaa"), MonitorTag: utils.StringPtr("left")},
+					{Description: utils.StringPtr(desc), EdidHash: utils.StringPtr("bbbbbbbb"), MonitorTag: utils.StringPtr("right")},
+				},
+			},
+		},
+	}).Get()
+
+	match := func(monitors ...*hypr.MonitorSpec) (bool, *matchers.MatchedProfile) {
+		found, res, err := matchers.NewMatcher().Match(cfg.Get(), monitors, power.ACPowerState, power.OpenedLidState)
+		assert.NoError(t, err)
+		return found, res
+	}
+
+	// connector names are deliberately the "wrong way round" relative to the hashes
+	first := &hypr.MonitorSpec{Name: "DP-6", ID: utils.IntPtr(1), Description: desc, EDIDHash: "bbbbbbbb" + "0123"}
+	second := &hypr.MonitorSpec{Name: "HDMI-A-1", ID: utils.IntPtr(2), Description: desc, EDIDHash: "aaaaaaaa" + "4567"}
+
+	found, res := match(first, second)
+	assert.True(t, found)
+	assert.Equal(t, "right", *res.MonitorToRule[1].MonitorTag)
+	assert.Equal(t, "left", *res.MonitorToRule[2].MonitorTag)
+
+	// a hash that is not present in the profile must not match
+	other := &hypr.MonitorSpec{Name: "DP-7", ID: utils.IntPtr(3), Description: desc, EDIDHash: "cccccccc"}
+	found, _ = match(first, other)
+	assert.False(t, found)
+
+	// unknown hash (EDID unreadable) never satisfies an edid_hash rule
+	unknown := &hypr.MonitorSpec{Name: "DP-8", ID: utils.IntPtr(4), Description: desc}
+	found, _ = match(first, unknown)
+	assert.False(t, found)
 }

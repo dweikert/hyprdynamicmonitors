@@ -102,12 +102,9 @@ func (m *Matcher) scoreProfile(cfg *config.RawConfig, conditions *config.Profile
 				continue
 			}
 
-			// if both are defined but there is a mismatch on either then skip
-			if condition.HasName() && condition.HasDescription() &&
-				(!condition.MatchName(connectedMonitor.Name) ||
-					!condition.MatchDescription(connectedMonitor.Description)) {
+			if mismatches(condition, connectedMonitor) {
 				logrus.WithFields(logrus.Fields{"monitor_id": *connectedMonitor.ID}).Debug(
-					"Monitor mismatches on description or name but both are required")
+					"Monitor mismatches on a required field")
 				continue
 			}
 
@@ -127,6 +124,14 @@ func (m *Matcher) scoreProfile(cfg *config.RawConfig, conditions *config.Profile
 					"monitor_id":   *connectedMonitor.ID,
 					"monitor_name": connectedMonitor.Name, "rule": *condition.Description,
 				}).Debug("Description matches")
+			}
+
+			if condition.HasEdidHash() && condition.MatchEdidHash(connectedMonitor.EDIDHash) {
+				score += *cfg.Scoring.EdidMatch
+				logrus.WithFields(logrus.Fields{
+					"monitor_id":   *connectedMonitor.ID,
+					"monitor_name": connectedMonitor.Name, "rule": *condition.EdidHash,
+				}).Debug("EDID hash matches")
 			}
 
 			if score > bestScore {
@@ -162,7 +167,20 @@ func (m *Matcher) calcFullProfileScore(cfg *config.RawConfig, conditions *config
 		if condition.HasDescription() {
 			fullMatchScore += *cfg.Scoring.DescriptionMatch
 		}
+		if condition.HasEdidHash() {
+			fullMatchScore += *cfg.Scoring.EdidMatch
+		}
 	}
 
 	return fullMatchScore
+}
+
+// mismatches reports whether the monitor is ruled out by the rule: name and description are
+// required together when both are set, and the edid hash is always required when set.
+func mismatches(condition *config.RequiredMonitor, monitor *hypr.MonitorSpec) bool {
+	if condition.HasName() && condition.HasDescription() &&
+		(!condition.MatchName(monitor.Name) || !condition.MatchDescription(monitor.Description)) {
+		return true
+	}
+	return condition.HasEdidHash() && !condition.MatchEdidHash(monitor.EDIDHash)
 }

@@ -53,6 +53,27 @@ match_description_using_regex = true
 It is disabled by default.
 :::
 
+### EDID hash
+
+Identical panels (same model, same placeholder serial) share one `description`, so it cannot tell them apart.
+The sha256 of the EDID the kernel exposes in `/sys/class/drm/card*-<connector>/edid` usually still differs
+between physical units, and it follows the monitor across ports.
+
+```toml title="~/.config/hyprdynamicmonitors/config.toml"
+[[profiles.desk.conditions.required_monitors]]
+description = "Lenovo Group Limited LEN P27q-10 0x01010101"
+edid_hash = "3336a50e"   # hex, at least the first 8 characters
+monitor_tag = "left"
+```
+
+Find the hashes with `sha256sum /sys/class/drm/card*-*/edid`. When set, the hash must match (it is required
+alongside `name`/`description`) and scores `edid_match` points. Hyprland only addresses a monitor by connector or
+description, so in the profile template emit the *current* connector via the tag instead of `desc:`:
+
+```lua
+hl.monitor({ output = "{{ (index .MonitorsByTag "left").Name }}", mode = "2560x1440@60", position = "-1480x-50", scale = 1 })
+```
+
 ## Tags (Optional)
 
 Custom labels you assign to monitors for easier reference in templates

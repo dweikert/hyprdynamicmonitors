@@ -206,6 +206,7 @@ type GeneralSection struct {
 type ScoringSection struct {
 	NameMatch        *int `toml:"name_match"`
 	DescriptionMatch *int `toml:"description_match"`
+	EdidMatch        *int `toml:"edid_match"`
 	PowerStateMatch  *int `toml:"power_state_match"`
 	LidStateMatch    *int `toml:"lid_state_match"`
 }
@@ -353,9 +354,11 @@ type ProfileCondition struct {
 }
 
 type RequiredMonitor struct {
-	Name                       *string        `toml:"name"`
-	Description                *string        `toml:"description"`
-	MonitorTag                 *string        `toml:"monitor_tag"`
+	Name        *string `toml:"name"`
+	Description *string `toml:"description"`
+	MonitorTag  *string `toml:"monitor_tag"`
+	// EdidHash matches the sha256 of the monitor EDID (hex, a unique prefix of at least 8 chars is enough).
+	EdidHash                   *string        `toml:"edid_hash"`
 	MatchDescriptionUsingRegex *bool          `toml:"match_description_using_regex"`
 	MatchNameUsingRegex        *bool          `toml:"match_name_using_regex"`
 	DescriptionRegex           *regexp.Regexp `toml:"-"`
@@ -825,6 +828,9 @@ func (s *ScoringSection) Validate() error {
 	if s.DescriptionMatch == nil {
 		s.DescriptionMatch = &defaultScore
 	}
+	if s.EdidMatch == nil {
+		s.EdidMatch = &defaultScore
+	}
 	if s.PowerStateMatch == nil {
 		s.PowerStateMatch = &defaultScore
 	}
@@ -832,7 +838,7 @@ func (s *ScoringSection) Validate() error {
 		s.LidStateMatch = &defaultScore
 	}
 
-	fields := []int{*s.DescriptionMatch, *s.NameMatch, *s.PowerStateMatch, *s.LidStateMatch}
+	fields := []int{*s.DescriptionMatch, *s.NameMatch, *s.EdidMatch, *s.PowerStateMatch, *s.LidStateMatch}
 	for _, field := range fields {
 		if 1 > field {
 			return errors.New("scoring section validation failed, score needs to be > 1")
@@ -932,8 +938,15 @@ func (pc *ProfileCondition) Validate() error {
 }
 
 func (rm *RequiredMonitor) Validate() error {
-	if rm.Name == nil && rm.Description == nil {
-		return errors.New("at least one of name, or description must be specified")
+	if rm.Name == nil && rm.Description == nil && rm.EdidHash == nil {
+		return errors.New("at least one of name, description, or edid_hash must be specified")
+	}
+	if rm.EdidHash != nil {
+		h := strings.ToLower(*rm.EdidHash)
+		if len(h) < 8 || strings.Trim(h, "0123456789abcdef") != "" {
+			return fmt.Errorf("edid_hash %q must be at least 8 hex characters", *rm.EdidHash)
+		}
+		rm.EdidHash = &h
 	}
 	if rm.MatchDescriptionUsingRegex == nil {
 		rm.MatchDescriptionUsingRegex = utils.JustPtr(false)
@@ -985,6 +998,17 @@ func (rm *RequiredMonitor) MatchDescription(desc string) bool {
 	}
 
 	return rm.DescriptionRegex.MatchString(desc)
+}
+
+func (rm *RequiredMonitor) HasEdidHash() bool {
+	return rm.EdidHash != nil
+}
+
+func (rm *RequiredMonitor) MatchEdidHash(hash string) bool {
+	if rm.EdidHash == nil || hash == "" {
+		return false
+	}
+	return strings.HasPrefix(strings.ToLower(hash), *rm.EdidHash)
 }
 
 func (rm *RequiredMonitor) HasDescription() bool {
